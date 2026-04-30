@@ -15349,7 +15349,7 @@ var Files = {
     return { path: filePath, status: "deleted" };
   },
   async search(query) {
-    const endpoint = `/remote.php/dav/files/${CONFIG.user}/`;
+    const endpoint = `/remote.php/dav/`;
     const body = `
             <d:searchrequest xmlns:d="DAV:">
                 <d:basicsearch>

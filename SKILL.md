@@ -1,18 +1,34 @@
 ---
 name: openclaw-nextcloud
 description: Manage Notes, Tasks, Calendar, Files, and Contacts in your Nextcloud instance via CalDAV, WebDAV, and Notes API. Use for creating notes, managing todos and calendar events, uploading/downloading files, and managing contacts.
-license: MIT
 compatibility: Requires Node.js 20+ and a Nextcloud app password (NEXTCLOUD_TOKEN) granting full account-scope access. Reads NEXTCLOUD_URL, NEXTCLOUD_USER, NEXTCLOUD_TOKEN. HTTPS-only egress to NEXTCLOUD_URL. Performs destructive, non-transactional writes (delete/edit/share); see Safety section in body.
 allowed-tools: Bash Read
 metadata:
-  required-env: "NEXTCLOUD_URL,NEXTCLOUD_USER,NEXTCLOUD_TOKEN"
-  secret-env: "NEXTCLOUD_TOKEN"
-  credential-scope: "nextcloud-account-full"
-  required-runtime: "node>=20"
-  network-egress: "${NEXTCLOUD_URL}"
+  openclaw:
+    version: 0.2.2
+    requires:
+      env:
+        - NEXTCLOUD_URL
+        - NEXTCLOUD_USER
+        - NEXTCLOUD_TOKEN
+      bins:
+        - node
+    primaryEnv: NEXTCLOUD_TOKEN
+    envVars:
+      - name: NEXTCLOUD_URL
+        required: true
+        description: Base URL of the Nextcloud instance, e.g. https://cloud.example.com
+      - name: NEXTCLOUD_USER
+        required: true
+        description: Nextcloud username
+      - name: NEXTCLOUD_TOKEN
+        required: true
+        description: Sensitive. Nextcloud app password granting full account-scope access. Use an app password from Settings → Security, not the account password.
+    homepage: https://github.com/keithvassallomt/openclaw-nextcloud
+  credential-scope: nextcloud-account-full
+  network-egress: ${NEXTCLOUD_URL}
   has-destructive-operations: "true"
-  destructive-operations: "notes:delete,files:delete,files:upload,tasks:delete,calendar:delete,contacts:delete,shares:create-link,shares:delete"
-  homepage: "https://github.com/keithvassallomt/openclaw-nextcloud"
+  destructive-operations: notes:delete,files:delete,files:upload,tasks:delete,calendar:delete,contacts:delete,shares:create-link,shares:delete
 ---
 
 # OpenClaw Nextcloud Skill

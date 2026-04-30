@@ -82,9 +82,11 @@ async function request(endpoint, options = {}) {
     try {
         const response = await fetch(url, { ...options, headers });
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const err = new Error(`HTTP ${response.status}: ${response.statusText}`);
+            err.status = response.status;
+            throw err;
         }
-        
+
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
             return await response.json();
@@ -95,7 +97,9 @@ async function request(endpoint, options = {}) {
             return await response.text();
         }
     } catch (error) {
-        throw new Error(`Request failed: ${error.message}`);
+        const wrapped = new Error(`Request failed: ${error.message}`);
+        if (error.status !== undefined) wrapped.status = error.status;
+        throw wrapped;
     }
 }
 
@@ -247,53 +251,82 @@ const Notes = {
 // 2. Files (WebDAV)
 const Files = {
     async list(dirPath = '/') {
-        // Ensure path starts with / and doesn't end with / unless it's root, but WebDAV is picky
-        // Nextcloud WebDAV path: /remote.php/dav/files/{user}/{path}
         const cleanPath = dirPath.startsWith('/') ? dirPath.slice(1) : dirPath;
         const endpoint = `/remote.php/dav/files/${CONFIG.user}/${cleanPath}`;
-        
+
+        // Explicitly request oc:fileid alongside the standard DAV props.
+        // Without an explicit body, default PROPFIND props are returned and oc:fileid is omitted.
+        const propfindBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+  <d:prop>
+    <d:resourcetype/>
+    <d:getcontentlength/>
+    <d:getlastmodified/>
+    <oc:fileid/>
+  </d:prop>
+</d:propfind>`;
+
         const response = await request(endpoint, {
             method: 'PROPFIND',
             headers: {
                 'Depth': '1',
                 'Content-Type': 'application/xml'
-            }
+            },
+            body: propfindBody
         });
 
-        // Parse XML response
         if (!response['d:multistatus'] || !response['d:multistatus']['d:response']) {
             return [];
         }
 
         const responses = ensureArray(response['d:multistatus']['d:response']);
+        const baseUrl = CONFIG.url.replace(/\/+$/, '');
 
         return responses.map(r => {
             const href = r['d:href'];
             const propstats = ensureArray(r['d:propstat']);
             if (!propstats[0] || !propstats[0]['d:prop']) return null;
-            const props = propstats[0]['d:prop']; // Assuming first propstat is 200 OK
-            
+            const props = propstats[0]['d:prop'];
+
             const isDir = props['d:resourcetype'] && props['d:resourcetype']['d:collection'] !== undefined;
             const name = decodeURIComponent(href.split('/').filter(p => p).pop());
-            
-            // Filter out the requested directory itself if it appears
-            if (href.endsWith(encodeURIComponent(CONFIG.user) + '/' + cleanPath) || 
+
+            if (href.endsWith(encodeURIComponent(CONFIG.user) + '/' + cleanPath) ||
                 href.endsWith(encodeURIComponent(CONFIG.user) + '/' + cleanPath + '/')) {
-                 if (cleanPath !== '' && name === cleanPath.split('/').pop()) return null; 
+                 if (cleanPath !== '' && name === cleanPath.split('/').pop()) return null;
             }
+
+            const fileId = props['oc:fileid'] != null ? String(props['oc:fileid']) : null;
 
             return {
                 name: name,
                 path: href,
                 isDir: isDir,
                 size: props['d:getcontentlength'],
-                lastModified: props['d:getlastmodified']
+                lastModified: props['d:getlastmodified'],
+                fileId: fileId,
+                internalLink: fileId ? `${baseUrl}/index.php/f/${fileId}` : null
             };
-        }).filter(f => f); // remove nulls
+        }).filter(f => f);
     },
     
     async upload(filePath, content) {
         const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
+
+        // Ensure parent directories exist. MKCOL each segment; 405 means it already exists.
+        const segments = cleanPath.split('/').filter(Boolean);
+        if (segments.length > 1) {
+            let currentPath = '';
+            for (const seg of segments.slice(0, -1)) {
+                currentPath = currentPath ? `${currentPath}/${seg}` : seg;
+                try {
+                    await request(`/remote.php/dav/files/${CONFIG.user}/${currentPath}`, { method: 'MKCOL' });
+                } catch (e) {
+                    if (e.status !== 405) throw e;
+                }
+            }
+        }
+
         const endpoint = `/remote.php/dav/files/${CONFIG.user}/${cleanPath}`;
 
         await request(endpoint, {
@@ -341,7 +374,7 @@ const Files = {
     async search(query) {
         const endpoint = `/remote.php/dav/`;
         const body = `
-            <d:searchrequest xmlns:d="DAV:">
+            <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
                 <d:basicsearch>
                     <d:select>
                         <d:prop>
@@ -349,6 +382,7 @@ const Files = {
                             <d:getcontentlength/>
                             <d:resourcetype/>
                             <d:displayname/>
+                            <oc:fileid/>
                         </d:prop>
                     </d:select>
                     <d:from>
@@ -377,20 +411,25 @@ const Files = {
 
         if (!response['d:multistatus'] || !response['d:multistatus']['d:response']) return [];
         const responses = ensureArray(response['d:multistatus']['d:response']);
+        const baseUrl = CONFIG.url.replace(/\/+$/, '');
 
         return responses.map(r => {
             const href = r['d:href'];
             const propstats = ensureArray(r['d:propstat']);
             if (!propstats[0] || !propstats[0]['d:prop']) return null;
             const props = propstats[0]['d:prop'];
-            
+
             const isDir = props['d:resourcetype'] && props['d:resourcetype']['d:collection'] !== undefined;
+            const fileId = props['oc:fileid'] != null ? String(props['oc:fileid']) : null;
+
             return {
                 name: props['d:displayname'] || decodeURIComponent(href.split('/').pop()),
                 path: href,
                 isDir: isDir,
                 size: props['d:getcontentlength'],
-                lastModified: props['d:getlastmodified']
+                lastModified: props['d:getlastmodified'],
+                fileId: fileId,
+                internalLink: fileId ? `${baseUrl}/index.php/f/${fileId}` : null
             };
         }).filter(f => f);
     }
@@ -895,7 +934,85 @@ const CalDAV = {
     }
 };
 
-// 4. Contacts (CardDAV)
+// 4. Shares (OCS Share API)
+const Shares = {
+    _ocsHeaders: { 'OCS-APIREQUEST': 'true', 'Accept': 'application/json' },
+
+    _unwrap(envelope) {
+        const meta = envelope && envelope.ocs && envelope.ocs.meta;
+        if (!meta || meta.status !== 'ok') {
+            throw new Error(`OCS error ${meta && meta.statuscode}: ${meta && meta.message}`);
+        }
+        return envelope.ocs.data;
+    },
+
+    _normalize(s) {
+        const baseUrl = CONFIG.url.replace(/\/+$/, '');
+        return {
+            id: s.id,
+            path: s.path,
+            shareType: s.share_type,
+            shareWith: s.share_with || null,
+            permissions: s.permissions,
+            token: s.token || null,
+            url: s.url || (s.token ? `${baseUrl}/s/${s.token}` : null),
+            expireDate: s.expiration || null
+        };
+    },
+
+    async list({ path = null } = {}) {
+        let endpoint = '/ocs/v2.php/apps/files_sharing/api/v1/shares';
+        if (path) {
+            const cleanPath = path.startsWith('/') ? path : `/${path}`;
+            endpoint += `?path=${encodeURIComponent(cleanPath)}`;
+        }
+        const envelope = await request(endpoint, { method: 'GET', headers: this._ocsHeaders });
+        const data = this._unwrap(envelope) || [];
+        return (Array.isArray(data) ? data : [data]).map(s => this._normalize(s));
+    },
+
+    async createLink({ path, permissions = 'read', password = null, expireDate = null }) {
+        if (!path) throw new Error('Missing path for share');
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+        const permMap = {
+            read: 1,    // read
+            edit: 15    // create + read + update + delete
+        };
+        const perms = permMap[permissions];
+        if (perms === undefined) {
+            throw new Error(`Unknown --permissions '${permissions}'. Use 'read' or 'edit'.`);
+        }
+
+        const body = new URLSearchParams({
+            path: cleanPath,
+            shareType: '3', // public link
+            permissions: String(perms)
+        });
+        if (password) body.set('password', password);
+        if (expireDate) body.set('expireDate', expireDate);
+
+        const envelope = await request('/ocs/v2.php/apps/files_sharing/api/v1/shares', {
+            method: 'POST',
+            headers: { ...this._ocsHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+        const s = this._unwrap(envelope);
+        return { ...this._normalize(s), passwordProtected: !!password };
+    },
+
+    async delete({ id }) {
+        if (!id) throw new Error('Missing share id');
+        const envelope = await request(
+            `/ocs/v2.php/apps/files_sharing/api/v1/shares/${encodeURIComponent(id)}`,
+            { method: 'DELETE', headers: this._ocsHeaders }
+        );
+        this._unwrap(envelope);
+        return { id, status: 'deleted' };
+    }
+};
+
+// 5. Contacts (CardDAV)
 const Contacts = {
     async findAddressBooks() {
         const endpoint = `/remote.php/dav/addressbooks/users/${CONFIG.user}/`;
@@ -1520,6 +1637,33 @@ async function main() {
             } else {
                 throw new Error('Unknown addressbooks command');
             }
+        } else if (command === 'shares') {
+            if (subCommand === 'create-link') {
+                const pathIndex = args.indexOf('--path');
+                if (pathIndex === -1) throw new Error('Missing --path');
+                const sharePath = args[pathIndex + 1];
+
+                const permIndex = args.indexOf('--permissions');
+                const permissions = permIndex !== -1 ? args[permIndex + 1] : 'read';
+
+                const pwIndex = args.indexOf('--password');
+                const password = pwIndex !== -1 ? args[pwIndex + 1] : null;
+
+                const expIndex = args.indexOf('--expire');
+                const expireDate = expIndex !== -1 ? args[expIndex + 1] : null;
+
+                output(await Shares.createLink({ path: sharePath, permissions, password, expireDate }));
+            } else if (subCommand === 'list') {
+                const pathIndex = args.indexOf('--path');
+                const sharePath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+                output(await Shares.list({ path: sharePath }));
+            } else if (subCommand === 'delete') {
+                const idIndex = args.indexOf('--id');
+                if (idIndex === -1) throw new Error('Missing --id');
+                output(await Shares.delete({ id: args[idIndex + 1] }));
+            } else {
+                throw new Error('Unknown shares command');
+            }
         } else if (command === 'contacts') {
             if (subCommand === 'list') {
                 const abIndex = args.indexOf('--addressbook');
@@ -1610,7 +1754,7 @@ async function main() {
                 throw new Error('Unknown contacts command');
             }
         } else {
-            console.log('Usage: node index.js <notes|files|calendar|calendars|tasks|contacts|addressbooks> <list|get|create|search|edit|delete> [options]');
+            console.log('Usage: node index.js <notes|files|calendar|calendars|tasks|contacts|addressbooks|shares> <list|get|create|search|edit|delete|create-link> [options]');
         }
     } catch (err) {
         errorOutput(err);

@@ -88,8 +88,8 @@ node scripts/nextcloud.js notes delete --id 123
 # List files in a directory
 node scripts/nextcloud.js files list --path "Documents/"
 
-# Upload a file
-node scripts/nextcloud.js files upload --path "Documents/test.txt" --content "Hello World"
+# Upload a file (parent directories are created automatically if missing)
+node scripts/nextcloud.js files upload --path "Documents/Reports/test.txt" --content "Hello World"
 
 # Download a file
 node scripts/nextcloud.js files get --path "Documents/test.txt"
@@ -100,6 +100,29 @@ node scripts/nextcloud.js files search --query "report"
 # Delete a file
 node scripts/nextcloud.js files delete --path "Documents/test.txt"
 ```
+
+`files list` and `files search` results include a `fileId` (when the server returns one) and a synthesized `internalLink` like `<NEXTCLOUD_URL>/index.php/f/<fileId>` that opens the file directly in the Nextcloud web UI.
+
+### Shares (public links)
+
+```bash
+# Create a public link share for a file or folder
+node scripts/nextcloud.js shares create-link --path "/Documents/Reports" \
+  --permissions read \
+  --password "Secret123" \
+  --expire "2026-04-15"
+
+# List all shares
+node scripts/nextcloud.js shares list
+
+# List shares for a specific path
+node scripts/nextcloud.js shares list --path "/Documents/Reports"
+
+# Delete a share by ID
+node scripts/nextcloud.js shares delete --id 29
+```
+
+`--permissions read` (default) is read-only; `--permissions edit` grants create/read/update/delete on the shared resource. `--password` and `--expire` are optional.
 
 ### Calendar
 
@@ -197,6 +220,7 @@ This tool uses the following Nextcloud APIs:
 | Files | WebDAV | `/remote.php/dav/files/` |
 | Calendar/Tasks | CalDAV | `/remote.php/dav/calendars/` |
 | Contacts | CardDAV | `/remote.php/dav/addressbooks/` |
+| Shares | OCS | `/ocs/v2.php/apps/files_sharing/api/v1/shares` |
 
 ## Dependencies
 
@@ -245,6 +269,13 @@ If the diff is non-empty, the committed bundle does not match the source — ple
 - Run on a per-user basis; no `sudo` is required or appropriate.
 - For first-time evaluation, point `NEXTCLOUD_URL` at a throwaway test account.
 - Treat `NEXTCLOUD_TOKEN` like any other credential: don't commit it, don't paste it into shared chats, and rotate it on any suspicion of compromise.
+
+## Contributors
+
+Thanks to:
+
+- [@schemann](https://github.com/schemann) — `fileId` / `internalLink` on file listings, auto-MKCOL on upload, public-link shares (`shares list` / `create-link` / `delete`).
+- [@KssimiClaw](https://github.com/KssimiClaw) — fix for `files search` 501 by routing the WebDAV `SEARCH` request to the DAV root.
 
 ## License
 

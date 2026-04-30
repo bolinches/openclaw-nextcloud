@@ -91,8 +91,17 @@ node scripts/nextcloud.js <command> <subcommand> [options]
 - `files list [--path <path>]`
 - `files search --query <q>`
 - `files get --path <path>` (download file content)
-- `files upload --path <path> --content <content>`
+- `files upload --path <path> --content <content>` — missing parent directories are created automatically
 - `files delete --path <path>`
+
+File listings and search results include a `fileId` (when the server returns one) and a synthesized `internalLink` of the form `<NEXTCLOUD_URL>/index.php/f/<fileId>` that opens the file in the Nextcloud web UI.
+
+### Shares (public links)
+- `shares list [--path <path>]`
+- `shares create-link --path <path> [--permissions read|edit] [--password <pw>] [--expire <YYYY-MM-DD>]`
+- `shares delete --id <id>`
+
+`--permissions read` (default) maps to Nextcloud permission `1` (read-only); `--permissions edit` maps to `15` (create+read+update+delete).
 
 ### Contacts
 - `contacts list [--addressbook <ab>]`
@@ -155,6 +164,27 @@ Date inputs (`--due`, `--start`, `--end`, `--from`, `--to`) accept either ISO 86
 }
 ```
 - `location`: free-text location string or null
+
+### Shares Output
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "29",
+    "path": "/Documents/Reports",
+    "shareType": 3,
+    "shareWith": null,
+    "permissions": 1,
+    "token": "K8XafX9fgk4n3LD",
+    "url": "https://cloud.example.com/index.php/s/K8XafX9fgk4n3LD",
+    "expireDate": null,
+    "passwordProtected": false
+  }
+}
+```
+- `shareType: 3` = public link
+- `permissions`: `1` for read-only, `15` for edit
+- `passwordProtected`: only set on `create-link`; reflects whether `--password` was supplied to that call
 
 ### Contacts List Output
 ```json

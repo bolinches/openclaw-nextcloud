@@ -2,13 +2,25 @@
 name: openclaw-nextcloud
 description: Manage Notes, Tasks, Calendar, Files, and Contacts in your Nextcloud instance via CalDAV, WebDAV, and Notes API. Use for creating notes, managing todos and calendar events, uploading/downloading files, and managing contacts.
 license: MIT
-compatibility: Requires Node.js 20+. Needs network access to Nextcloud instance.
+compatibility: Requires Node.js 20+. Reads env vars NEXTCLOUD_URL, NEXTCLOUD_USER, NEXTCLOUD_TOKEN (token must be a Nextcloud app password). Network egress to NEXTCLOUD_URL only.
 allowed-tools: Bash Read
+metadata:
+  required-env: "NEXTCLOUD_URL,NEXTCLOUD_USER,NEXTCLOUD_TOKEN"
+  secret-env: "NEXTCLOUD_TOKEN"
+  required-runtime: "node>=20"
+  network-egress: "${NEXTCLOUD_URL}"
+  homepage: "https://github.com/keithvassallomt/openclaw-nextcloud"
 ---
 
 # OpenClaw Nextcloud Skill
 
 This skill provides integration with a Nextcloud instance. It supports access to Notes, Tasks (Todos), Calendars, Files, and Contacts.
+
+## Requirements
+
+- **Node.js 20+** on PATH (`node scripts/nextcloud.js`).
+- **Network egress** to `NEXTCLOUD_URL` only — the skill makes no other outbound calls.
+- **Environment variables** (see Configuration below). All three are required at runtime; without them the script exits with a clear error before making any request.
 
 ## Configuration
 
@@ -16,7 +28,9 @@ The skill requires the following environment variables:
 
 - `NEXTCLOUD_URL`: The base URL of your Nextcloud instance (e.g., `https://cloud.example.com`).
 - `NEXTCLOUD_USER`: Your Nextcloud username.
-- `NEXTCLOUD_TOKEN`: An App Password (recommended) or your login password.
+- `NEXTCLOUD_TOKEN`: **Sensitive.** Use a Nextcloud **app password** (Settings → Security → "Devices & sessions"), not your account password. App passwords can be revoked from the Nextcloud UI without changing your main credentials, and limit blast radius if leaked.
+
+`NEXTCLOUD_URL` must use `https://`. The script refuses to run over plain HTTP (except `localhost`/`127.0.0.1`/`[::1]`); set `OPENCLAW_ALLOW_HTTP=1` to override (not recommended outside isolated dev).
 
 ## Features
 
@@ -66,8 +80,8 @@ node scripts/nextcloud.js <command> <subcommand> [options]
 
 ### Calendar Events
 - `calendar list [--from <iso>] [--to <iso>]` (Defaults to next 7 days)
-- `calendar create --summary <s> --start <iso> --end <iso> [--calendar <c>] [--description <d>]`
-- `calendar edit --uid <u> [--calendar <c>] [--summary <s>] [--start <iso>] [--end <iso>] [--description <d>]`
+- `calendar create --summary <s> --start <iso> --end <iso> [--calendar <c>] [--description <d>] [--location <l>]`
+- `calendar edit --uid <u> [--calendar <c>] [--summary <s>] [--start <iso>] [--end <iso>] [--description <d>] [--location <l>]`
 - `calendar delete --uid <u> [--calendar <c>]`
 
 ### Calendars (list available calendars)
@@ -90,6 +104,13 @@ node scripts/nextcloud.js <command> <subcommand> [options]
 
 ### Address Books (list available address books)
 - `addressbooks list`
+
+### Calendar / Address Book Names
+
+`--calendar` and `--addressbook` accept any of: the exact display name, a
+case-insensitive display name, the URL slug (last path segment of the
+collection URL), or the full href / URL. If no match is found, the error
+message lists the available names.
 
 ## Output Format
 
@@ -114,6 +135,9 @@ All outputs are JSON formatted.
 - `due`: CalDAV format date (YYYYMMDDTHHmmssZ) or null
 - `priority`: 0-9 (0 = undefined, 1 = highest, 9 = lowest) or null
 
+Date inputs (`--due`, `--start`, `--end`, `--from`, `--to`) accept either ISO 8601
+(`2026-02-01T15:30:00Z`) or the same compact CalDAV form shown in output (`20260201T153000Z`).
+
 ### Calendar Events List Output
 ```json
 {
@@ -124,11 +148,13 @@ All outputs are JSON formatted.
       "calendar": "Calendar Name",
       "summary": "Event title",
       "start": "20260205T100000Z",
-      "end": "20260205T110000Z"
+      "end": "20260205T110000Z",
+      "location": "Conference Room B"
     }
   ]
 }
 ```
+- `location`: free-text location string or null
 
 ### Contacts List Output
 ```json

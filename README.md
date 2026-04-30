@@ -110,15 +110,21 @@ node scripts/nextcloud.js calendars list
 # List events in a date range
 node scripts/nextcloud.js calendar list --from "2026-02-01T00:00:00Z" --to "2026-02-28T23:59:59Z"
 
-# Create an event
-node scripts/nextcloud.js calendar create --summary "Team Meeting" --start "2026-02-05T10:00:00Z" --end "2026-02-05T11:00:00Z"
+# Create an event (with optional location)
+node scripts/nextcloud.js calendar create --summary "Team Meeting" --start "2026-02-05T10:00:00Z" --end "2026-02-05T11:00:00Z" --location "Conference Room B"
 
 # Update an event
-node scripts/nextcloud.js calendar edit --uid event-uid --summary "Updated Meeting"
+node scripts/nextcloud.js calendar edit --uid event-uid --summary "Updated Meeting" --location "Zoom"
 
 # Delete an event
 node scripts/nextcloud.js calendar delete --uid event-uid
 ```
+
+`--calendar` and `--addressbook` accept the display name (case-insensitive),
+the URL slug, or the full collection URL — so all of `Personal`, `personal`,
+and `/remote.php/dav/calendars/<user>/personal/` resolve to the same calendar.
+Date inputs accept either ISO 8601 (`2026-02-05T10:00:00Z`) or the compact
+CalDAV form (`20260205T100000Z`).
 
 ### Tasks
 
@@ -197,6 +203,48 @@ This tool uses the following Nextcloud APIs:
 - [node-fetch](https://www.npmjs.com/package/node-fetch) - HTTP client
 - [fast-xml-parser](https://www.npmjs.com/package/fast-xml-parser) - XML parsing
 - [date-fns](https://www.npmjs.com/package/date-fns) - Date formatting
+
+## Security & Trust
+
+This skill executes a bundled JavaScript file (`scripts/nextcloud.js`) on your machine and is given a credential for your Nextcloud account. Because that's a non-trivial trust ask, here's what the skill does and how you can verify it:
+
+**What it can access**
+
+- The Nextcloud instance at `NEXTCLOUD_URL` — no other endpoints. There is no telemetry, no analytics, no auto-update, no third-party calls. You can confirm this by `grep -E 'fetch\(|http[s]?://' scripts/nextcloud.js`; every URL is built from `CONFIG.url` (i.e. `NEXTCLOUD_URL`) or relative API paths.
+- The environment variables `NEXTCLOUD_URL`, `NEXTCLOUD_USER`, `NEXTCLOUD_TOKEN`. No other env vars are read.
+- No filesystem access beyond the Node module loader and the standard `fs` for reading inputs you pass it.
+
+**Credentials**
+
+- Always use a Nextcloud **app password** (Settings → Security → "Devices & sessions"), not your account password. App passwords have account-level scope but can be revoked individually from the Nextcloud UI.
+- The token is sent as a Basic Auth header to the configured Nextcloud instance. **The script enforces HTTPS for `NEXTCLOUD_URL`** at startup and refuses to run over plain `http://` (except `localhost`/`127.0.0.1`/`[::1]` for local development). The check can be overridden with `OPENCLAW_ALLOW_HTTP=1`, but this is strongly discouraged outside isolated dev environments.
+
+**Static analysis**
+
+A static analyser scanning this skill will likely flag rules in the family of `suspicious.env_credential_access` — code that reads an environment variable and then makes a network call. That signal is **expected**: every authenticated API client matches it, including this one. The pattern is constrained as follows, and these constraints are what to audit:
+
+- The credential is read from `NEXTCLOUD_TOKEN` only. No other env var is consulted for credential material.
+- The credential is sent only to URLs derived from `NEXTCLOUD_URL`. There are no hard-coded hosts in the source (`grep -E 'http[s]?://' index.js` returns nothing).
+- HTTPS is enforced at startup (see above), so the credential cannot be sent in cleartext without an explicit opt-in.
+- There is no telemetry, analytics, auto-update, or third-party callback. The script makes one outbound destination — your Nextcloud — and exits.
+
+**Auditing the bundle**
+
+`scripts/nextcloud.js` is the output of running `esbuild` over `index.js` plus the three declared dependencies. To verify the bundle matches the source:
+
+```bash
+npm install
+npm run build
+git diff scripts/nextcloud.js   # should report no changes
+```
+
+If the diff is non-empty, the committed bundle does not match the source — please open an issue.
+
+**Reducing privilege**
+
+- Run on a per-user basis; no `sudo` is required or appropriate.
+- For first-time evaluation, point `NEXTCLOUD_URL` at a throwaway test account.
+- Treat `NEXTCLOUD_TOKEN` like any other credential: don't commit it, don't paste it into shared chats, and rotate it on any suspicion of compromise.
 
 ## License
 

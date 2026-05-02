@@ -17963,7 +17963,9 @@ var CalDAV = {
       let compType = null;
       const compSet = props["cal:supported-calendar-component-set"];
       if (compSet && compSet["cal:comp"]) {
-        compType = compSet["cal:comp"]["@_name"];
+        const comps = Array.isArray(compSet["cal:comp"]) ? compSet["cal:comp"] : [compSet["cal:comp"]];
+        const match = componentType ? comps.find((c) => c["@_name"] === componentType) : comps[0];
+        compType = match ? match["@_name"] : comps[0]["@_name"];
       }
       return {
         url: r["d:href"],

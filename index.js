@@ -457,11 +457,20 @@ const CalDAV = {
 
              if (!props['d:resourcetype'] || !('cal:calendar' in props['d:resourcetype'])) return null;
 
-             // Get supported component type (VEVENT or VTODO)
+             // Get supported component type(s) (VEVENT, VTODO, or both).
+             // fast-xml-parser returns a single object for one <cal:comp> or an array
+             // when the calendar supports multiple component types.
              let compType = null;
              const compSet = props['cal:supported-calendar-component-set'];
              if (compSet && compSet['cal:comp']) {
-                 compType = compSet['cal:comp']['@_name'];
+                 // Normalize to array so we handle both single and multi-comp calendars.
+                 const comps = Array.isArray(compSet['cal:comp']) ? compSet['cal:comp'] : [compSet['cal:comp']];
+                 // If filtering for a specific type (e.g. VEVENT), find the matching one.
+                 // Otherwise just use the first component type.
+                 const match = componentType
+                     ? comps.find(c => c['@_name'] === componentType)
+                     : comps[0];
+                 compType = match ? match['@_name'] : comps[0]['@_name'];
              }
 
              return {

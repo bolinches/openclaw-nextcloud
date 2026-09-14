@@ -17736,6 +17736,38 @@ if (!CONFIG.url || !CONFIG.user || !CONFIG.token) {
   process.exit(1);
 }
 {
+  const UNRESOLVED_REF_PATTERNS = [
+    /^secretref:/i,
+    // not OpenClaw syntax, but a common guess
+    /^secretref-env:/i,
+    // retired OpenClaw marker
+    /^__env__:/i,
+    // older retired OpenClaw marker
+    /^\$[A-Z][A-Z0-9_]{0,127}$/,
+    // $NAME env shorthand
+    /^\$\{[A-Z][A-Z0-9_]{0,127}\}$/,
+    // ${NAME} env shorthand
+    /^\{\s*"?source"?\s*:/
+    // a stringified SecretRef object
+  ];
+  const named = {
+    NEXTCLOUD_URL: CONFIG.url,
+    NEXTCLOUD_USER: CONFIG.user,
+    NEXTCLOUD_TOKEN: CONFIG.token,
+    NEXTCLOUD_EMAIL: CONFIG.email
+  };
+  for (const [name, value] of Object.entries(named)) {
+    if (!value) continue;
+    const isRef = UNRESOLVED_REF_PATTERNS.some((p) => p.test(value.trim()));
+    if (!isRef) continue;
+    console.error(JSON.stringify({
+      status: "error",
+      message: `${name} holds an unresolved secret reference instead of a value. OpenClaw resolves SecretRefs only for skills.entries.openclaw-nextcloud.apiKey, which it injects as NEXTCLOUD_TOKEN; values under skills.entries.openclaw-nextcloud.env are injected verbatim. Set the app password as apiKey: {"source":"store","provider":"default","id":"NEXTCLOUD_TOKEN"} and give the other variables plain values. See the Configuration section of README.md.`
+    }));
+    process.exit(1);
+  }
+}
+{
   const parsed = (() => {
     try {
       return new URL(CONFIG.url);

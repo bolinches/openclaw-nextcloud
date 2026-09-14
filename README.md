@@ -140,9 +140,37 @@ openclaw config set \
 
 Save the app password through **Control UI → Skills → openclaw-nextcloud →
 Save key**. OpenClaw stores it as the skill's `apiKey` and injects it as
-`NEXTCLOUD_TOKEN` only for agent runs. Prefer a supported OpenClaw SecretRef
-when managing credentials outside the Control UI. Do not put the app password
-in prompts, shell history, examples, or logs.
+`NEXTCLOUD_TOKEN` only for agent runs. Do not put the app password in prompts,
+shell history, examples, or logs.
+
+To manage the credential outside the Control UI, point `apiKey` at a stored
+secret. `apiKey` is the **only** skill field OpenClaw resolves a SecretRef for,
+and it always lands in the skill's `primaryEnv` (`NEXTCLOUD_TOKEN`):
+
+```json5
+"openclaw-nextcloud": {
+  enabled: true,
+  apiKey: { source: "store", provider: "default", id: "NEXTCLOUD_TOKEN" },
+  env: {
+    NEXTCLOUD_URL: "https://your-nextcloud-instance.com",
+    NEXTCLOUD_USER: "your_username"
+  }
+}
+```
+
+Two things to know about this:
+
+- **`env` values are literals.** OpenClaw injects everything under
+  `skills.entries.<key>.env` verbatim — it does not resolve SecretRefs there. A
+  reference written into that map reaches the skill as its own text and the
+  request fails. This is fine in practice: `NEXTCLOUD_URL` and `NEXTCLOUD_USER`
+  are not secrets, and only `NEXTCLOUD_TOKEN` needs the store. Since v0.6.1 the
+  skill detects the common reference shapes and reports them instead of failing
+  with an unexplained 401.
+- **The process environment wins.** OpenClaw skips injecting any variable that
+  is already set in the gateway's own environment. If a systemd
+  `EnvironmentFile` still defines `NEXTCLOUD_TOKEN`, the config path above is
+  silently bypassed — remove the variables from that file first.
 
 For direct CLI use outside OpenClaw, provide the same values as environment
 variables:

@@ -66,8 +66,14 @@ const env = {
 };
 
 function run(args) {
+  return runWithEnv(args, {});
+}
+
+function runWithEnv(args, overrides) {
   return new Promise(resolveRun => {
-    const child = spawn(process.execPath, [bundle, ...args], { env });
+    const child = spawn(process.execPath, [bundle, ...args], {
+      env: { ...env, ...overrides }
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', chunk => stdout += chunk);
@@ -270,6 +276,48 @@ record(
   result.code !== 0 &&
     result.stderr.includes('exceeds the 67108864-byte safety limit') &&
     requests.length === before,
+  { result }
+);
+
+// An unresolved SecretRef reaching the skill as literal text used to surface
+// as an unexplained 401 from Nextcloud (issue #21). It must be caught before
+// any request leaves, and the value itself must never appear in the output.
+const unresolvedRefs = [
+  ['NEXTCLOUD_TOKEN', 'SecretRef:NEXTCLOUD_TOKEN'],
+  ['NEXTCLOUD_TOKEN', 'secretref-env:NEXTCLOUD_TOKEN'],
+  ['NEXTCLOUD_TOKEN', '__env__:NEXTCLOUD_TOKEN'],
+  ['NEXTCLOUD_TOKEN', '$NEXTCLOUD_TOKEN'],
+  ['NEXTCLOUD_TOKEN', '${NEXTCLOUD_TOKEN}'],
+  ['NEXTCLOUD_TOKEN', '{"source":"store","provider":"default","id":"X"}'],
+  ['NEXTCLOUD_URL', 'SecretRef:NEXTCLOUD_URL'],
+  ['NEXTCLOUD_USER', '$NEXTCLOUD_USER']
+];
+
+for (const [name, value] of unresolvedRefs) {
+  before = requests.length;
+  result = await runWithEnv(['notes', 'list'], { [name]: value });
+  record(
+    `${name}=${value.slice(0, 16)}… is rejected as an unresolved reference`,
+    result.code !== 0 &&
+      result.stderr.includes(`${name} holds an unresolved secret reference`) &&
+      !result.stderr.includes(value) &&
+      !result.stdout.includes(value) &&
+      requests.length === before,
+    { result }
+  );
+}
+
+// The guard must not reject credentials that merely look unusual.
+before = requests.length;
+result = await runWithEnv(['notes', 'list'], {
+  NEXTCLOUD_TOKEN: 'AbCd1-2EfGh3-4IjKl5-6MnOp7-8QrSt'
+});
+record(
+  'an ordinary app password is not mistaken for a reference',
+  // The loopback stub is not a real Notes API, so the command's own exit code
+  // is not meaningful here — what matters is that the guard let the request out.
+  requests.length === before + 1 &&
+    !result.stderr.includes('unresolved secret reference'),
   { result }
 );
 

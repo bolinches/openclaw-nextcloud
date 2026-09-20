@@ -215,8 +215,15 @@ File listings and search results include a `fileId` (when the server returns one
 - `contacts list [--addressbook <ab>]`
 - `contacts get --uid <u> [--addressbook <ab>]`
 - `contacts search --query <q> [--addressbook <ab>]`
-- `contacts create --name <n> [--addressbook <ab>] [--email <e>] [--phone <p>] [--organization <o>] [--title <t>] [--note <n> | --note-file <file>]`
-- `contacts edit --uid <u> [--addressbook <ab>] [--name <n>] [--email <e>] [--phone <p>] [--organization <o>] [--title <t>] [--note <n> | --note-file <file>]`
+- `contacts create --name <n> [--addressbook <ab>] [--email <e>] [--phone <p>] [--organization <o>] [--title <t>] [--note <n> | --note-file <file>] [--bday <date>]`
+- `contacts edit --uid <u> [--addressbook <ab>] [--name <n>] [--email <e>] [--phone <p>] [--organization <o>] [--title <t>] [--note <n> | --note-file <file>] [--bday <date>]`
+
+`--bday` accepts `YYYY-MM-DD` (`1943-10-19`), the compact form (`19431019`),
+or `--MM-DD` (`--10-19`) when the year is unknown. The value is validated and
+normalised, never escaped: it goes straight into a property line, so a malformed
+value is rejected before any request rather than written. On `contacts edit`, an
+empty value (`--bday ""`) removes the property. `contacts list`, `get` and
+`search` return it as `birthday`.
 - `contacts delete --uid <u> [--addressbook <ab>] --confirm contacts:delete`
 
 ### Address Books (list available address books)

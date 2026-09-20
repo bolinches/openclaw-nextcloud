@@ -45,6 +45,7 @@ FN:Grouped\\, Contact
 N:Smith\\;Jones;John;;;
 item1.EMAIL;TYPE=work:grouped@example.com
 item2.TEL:+15551234567
+item3.BDAY:1943-10-19
 END:VCARD</card:address-data>
     </d:prop></d:propstat>
   </d:response>
@@ -558,6 +559,12 @@ record(
   { nameComponents: groupedContact?.nameComponents ?? null, result }
 );
 
+record(
+  'BDAY parses from a stored vCard, including a grouped property',
+  result.code === 0 && groupedContact?.birthday === '1943-10-19',
+  { birthday: groupedContact?.birthday ?? null, result }
+);
+
 before = requests.length;
 result = await run([
   'contacts', 'edit',
@@ -588,6 +595,114 @@ record(
   result.code === 0 &&
     notePut?.body.includes('NOTE:Budget $& $1\nEND:VCARD'),
   { body: notePut?.body ?? null, result }
+);
+
+// --- Contacts: birthday (BDAY) ---
+
+before = requests.length;
+result = await run([
+  'contacts', 'create',
+  '--name', 'Dummy Birthday',
+  '--bday', '1943-10-19'
+]);
+const bdayCreatePut = requests.slice(before).find(entry => entry.method === 'PUT');
+record(
+  'contacts create writes BDAY for a full date',
+  result.code === 0 &&
+    bdayCreatePut?.body.includes('BDAY:1943-10-19\n') &&
+    bdayCreatePut?.body.includes('FN:Dummy Birthday\n'),
+  { body: bdayCreatePut?.body ?? null, result }
+);
+
+// The compact form is normalised to the hyphenated one.
+before = requests.length;
+result = await run([
+  'contacts', 'create',
+  '--name', 'Dummy Compact',
+  '--bday', '19431019'
+]);
+const compactPut = requests.slice(before).find(entry => entry.method === 'PUT');
+record(
+  'contacts create normalises the compact birthday form',
+  result.code === 0 && compactPut?.body.includes('BDAY:1943-10-19\n'),
+  { body: compactPut?.body ?? null, result }
+);
+
+// A birthday with no year, which is a legal VERSION:3.0 value.
+before = requests.length;
+result = await run([
+  'contacts', 'create',
+  '--name', 'Dummy No Year',
+  '--bday', '--10-19'
+]);
+const noYearPut = requests.slice(before).find(entry => entry.method === 'PUT');
+record(
+  'contacts create accepts a year-less birthday',
+  result.code === 0 && noYearPut?.body.includes('BDAY:--10-19\n'),
+  { body: noYearPut?.body ?? null, result }
+);
+
+// Invalid values are refused before a request is made. The newline case is the
+// important one: it is a property-injection attempt aimed at the vCard body.
+for (const [label, value] of [
+  ['an impossible date', '1943-02-30'],
+  ['an impossible month', '1943-13-01'],
+  ['a non-date string', 'not-a-date'],
+  ['a property injection attempt', '1943-10-19\nEMAIL:x@evil.example'],
+  ['a year-less injection attempt', '--10-19\nEMAIL:x@evil.example']
+]) {
+  before = requests.length;
+  result = await run([
+    'contacts', 'create',
+    '--name', 'Dummy Rejected',
+    '--bday', value
+  ]);
+  record(
+    `contacts create rejects ${label} before a request`,
+    result.code !== 0 &&
+      result.stderr.includes('Invalid birthday') &&
+      requests.length === before,
+    { result }
+  );
+}
+
+// Editing an existing card inserts the property rather than replacing the card.
+before = requests.length;
+result = await run([
+  'contacts', 'edit',
+  '--uid', 'grouped',
+  '--bday', '1943-10-19'
+]);
+const bdayEditPut = requests.slice(before).find(entry => entry.method === 'PUT');
+const bdayLines = bdayEditPut?.body
+  .split(/\r?\n/)
+  .filter(line => /^(?:[A-Za-z0-9-]+\.)?BDAY/i.test(line)) ?? [];
+record(
+  'contacts edit rewrites BDAY in place and keeps its item group',
+  result.code === 0 &&
+    bdayLines.length === 1 &&
+    bdayLines[0] === 'item3.BDAY:1943-10-19' &&
+    bdayEditPut?.body.includes('item1.EMAIL;TYPE=work:grouped@example.com') &&
+    bdayEditPut?.body.includes('FN:Grouped\\, Contact'),
+  { bdayLines, body: bdayEditPut?.body ?? null, result }
+);
+
+// An explicitly empty value clears the property, matching the tasks convention.
+before = requests.length;
+result = await run([
+  'contacts', 'edit',
+  '--uid', 'grouped',
+  '--bday', ''
+]);
+const bdayClearPut = requests.slice(before).find(entry => entry.method === 'PUT');
+record(
+  'contacts edit with an empty birthday removes BDAY',
+  result.code === 0 &&
+    !/^(?:[A-Za-z0-9-]+\.)?BDAY/mi.test(bdayClearPut?.body ?? '') &&
+    bdayClearPut?.body.includes('item2.TEL:+15551234567') &&
+    // The rest of the card must survive the removal.
+    bdayClearPut?.body.includes('item1.EMAIL;TYPE=work:grouped@example.com'),
+  { body: bdayClearPut?.body ?? null, result }
 );
 
 for (const [subcommand, args] of [

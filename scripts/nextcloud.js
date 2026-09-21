@@ -17917,6 +17917,7 @@ function parseStatusInput(value) {
   }
   return normalized;
 }
+var MAX_DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 function parseBirthdayInput(value) {
   if (typeof value !== "string") {
     throw new Error(`Invalid birthday '${value}'. Expected a string.`);
@@ -17930,17 +17931,19 @@ function parseBirthdayInput(value) {
     if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== normalized) {
       throw new Error(`Invalid birthday '${value}'. That date does not exist.`);
     }
-    return { value: normalized, hasYear: true };
+    return normalized;
   }
   const noYear = /^--(\d{2})-?(\d{2})$/.exec(raw);
   if (noYear) {
     const [, mo, d] = noYear;
-    if (Number(mo) < 1 || Number(mo) > 12 || Number(d) < 1 || Number(d) > 31) {
+    const month = Number(mo);
+    const day = Number(d);
+    if (month < 1 || month > 12 || day < 1 || day > MAX_DAYS_IN_MONTH[month - 1]) {
       throw new Error(
-        `Invalid birthday '${value}'. Month must be 01-12 and day 01-31.`
+        `Invalid birthday '${value}'. That date does not exist.`
       );
     }
-    return { value: `--${mo}-${d}`, hasYear: false };
+    return `--${mo}-${d}`;
   }
   throw new Error(
     `Invalid birthday '${value}'. Use YYYY-MM-DD (1943-10-19), the compact form (19431019), or --MM-DD (--10-19) when the year is unknown.`
@@ -19115,7 +19118,7 @@ var Contacts = {
     let birthday = getField("BDAY");
     if (birthday !== null) {
       try {
-        birthday = parseBirthdayInput(birthday).value;
+        birthday = parseBirthdayInput(birthday);
       } catch {
       }
     }
@@ -19966,10 +19969,8 @@ async function main() {
         if (titleIndex !== -1) options.title = args[titleIndex + 1];
         const note = readTextOption(args, "--note", "--note-file");
         if (note !== void 0) options.note = note;
-        const bdayIndex = args.indexOf("--bday");
-        if (bdayIndex !== -1) {
-          options.bday = parseBirthdayInput(args[bdayIndex + 1]).value;
-        }
+        const bday = getOptionValue(args, "--bday");
+        if (bday !== void 0) options.bday = parseBirthdayInput(bday);
         output(await Contacts.create(fullName, addressBook, options));
       } else if (subCommand === "edit") {
         const uidIndex = args.indexOf("--uid");
@@ -19990,10 +19991,9 @@ async function main() {
         if (titleIndex !== -1) updates.title = args[titleIndex + 1];
         const note = readTextOption(args, "--note", "--note-file");
         if (note !== void 0) updates.note = note;
-        const bdayIndex = args.indexOf("--bday");
-        if (bdayIndex !== -1) {
-          const rawBday = args[bdayIndex + 1];
-          updates.bday = rawBday === "" ? "" : parseBirthdayInput(rawBday).value;
+        const bday = getOptionValue(args, "--bday");
+        if (bday !== void 0) {
+          updates.bday = bday === "" ? "" : parseBirthdayInput(bday);
         }
         output(await Contacts.update(uid, addressBook, updates));
       } else if (subCommand === "delete") {

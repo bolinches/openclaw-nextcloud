@@ -290,6 +290,11 @@ function parseStatusInput(value) {
     return normalized;
 }
 
+// Longest possible month, so the year-less form is held to the same standard as
+// the full one. February allows 29: a birthday on a leap day is legitimate, and
+// with no year there is nothing to check it against.
+const MAX_DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
 // A BDAY value for a VERSION:3.0 vCard. RFC 2426 3.6.5 allows a full date; the
 // year-less form (--MM-DD) is what a client writes when the year is unknown, and
 // Nextcloud stores it alongside 3.0 cards. Both are normalised to their
@@ -312,18 +317,20 @@ function parseBirthdayInput(value) {
         if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== normalized) {
             throw new Error(`Invalid birthday '${value}'. That date does not exist.`);
         }
-        return { value: normalized, hasYear: true };
+        return normalized;
     }
 
     const noYear = /^--(\d{2})-?(\d{2})$/.exec(raw);
     if (noYear) {
         const [, mo, d] = noYear;
-        if (Number(mo) < 1 || Number(mo) > 12 || Number(d) < 1 || Number(d) > 31) {
+        const month = Number(mo);
+        const day = Number(d);
+        if (month < 1 || month > 12 || day < 1 || day > MAX_DAYS_IN_MONTH[month - 1]) {
             throw new Error(
-                `Invalid birthday '${value}'. Month must be 01-12 and day 01-31.`
+                `Invalid birthday '${value}'. That date does not exist.`
             );
         }
-        return { value: `--${mo}-${d}`, hasYear: false };
+        return `--${mo}-${d}`;
     }
 
     throw new Error(
@@ -1728,7 +1735,7 @@ const Contacts = {
         let birthday = getField('BDAY');
         if (birthday !== null) {
             try {
-                birthday = parseBirthdayInput(birthday).value;
+                birthday = parseBirthdayInput(birthday);
             } catch {
                 // keep the raw value
             }
@@ -2711,10 +2718,8 @@ async function main() {
                 const note = readTextOption(args, '--note', '--note-file');
                 if (note !== undefined) options.note = note;
 
-                const bdayIndex = args.indexOf('--bday');
-                if (bdayIndex !== -1) {
-                    options.bday = parseBirthdayInput(args[bdayIndex + 1]).value;
-                }
+                const bday = getOptionValue(args, '--bday');
+                if (bday !== undefined) options.bday = parseBirthdayInput(bday);
 
                 output(await Contacts.create(fullName, addressBook, options));
             } else if (subCommand === 'edit') {
@@ -2747,12 +2752,9 @@ async function main() {
                 // An empty value clears the property, matching the tasks
                 // convention (--tags ""). getOptionValue throws when the flag has
                 // no following argument at all, so "" must be passed explicitly.
-                const bdayIndex = args.indexOf('--bday');
-                if (bdayIndex !== -1) {
-                    const rawBday = args[bdayIndex + 1];
-                    updates.bday = rawBday === ''
-                        ? ''
-                        : parseBirthdayInput(rawBday).value;
+                const bday = getOptionValue(args, '--bday');
+                if (bday !== undefined) {
+                    updates.bday = bday === '' ? '' : parseBirthdayInput(bday);
                 }
 
                 output(await Contacts.update(uid, addressBook, updates));

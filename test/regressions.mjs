@@ -642,6 +642,20 @@ record(
   { body: noYearPut?.body ?? null, result }
 );
 
+// A leap day with no year is still legal -- there is no year to disqualify it.
+before = requests.length;
+result = await run([
+  'contacts', 'create',
+  '--name', 'Dummy Leap Day',
+  '--bday', '--02-29'
+]);
+const leapPut = requests.slice(before).find(entry => entry.method === 'PUT');
+record(
+  'contacts create accepts a year-less leap day',
+  result.code === 0 && leapPut?.body.includes('BDAY:--02-29\n'),
+  { body: leapPut?.body ?? null, result }
+);
+
 // Invalid values are refused before a request is made. The newline case is the
 // important one: it is a property-injection attempt aimed at the vCard body.
 for (const [label, value] of [
@@ -649,7 +663,12 @@ for (const [label, value] of [
   ['an impossible month', '1943-13-01'],
   ['a non-date string', 'not-a-date'],
   ['a property injection attempt', '1943-10-19\nEMAIL:x@evil.example'],
-  ['a year-less injection attempt', '--10-19\nEMAIL:x@evil.example']
+  ['a year-less injection attempt', '--10-19\nEMAIL:x@evil.example'],
+  // The year-less form gets the same day-per-month check as the full one:
+  // February 30 exists in no year, so having no year is no excuse.
+  ['an impossible year-less date', '--02-30'],
+  ['a year-less day beyond its month', '--04-31'],
+  ['a year-less month of 00', '--00-10']
 ]) {
   before = requests.length;
   result = await run([
@@ -704,6 +723,24 @@ record(
     bdayClearPut?.body.includes('item1.EMAIL;TYPE=work:grouped@example.com'),
   { body: bdayClearPut?.body ?? null, result }
 );
+
+// A flag with no value at all is a typo, not a request to clear, and it is
+// reported by the shared option reader rather than by the date parser.
+for (const subcommand of ['create', 'edit']) {
+  before = requests.length;
+  result = await run(
+    subcommand === 'create'
+      ? ['contacts', 'create', '--name', 'Dummy Missing', '--bday']
+      : ['contacts', 'edit', '--uid', 'grouped', '--bday']
+  );
+  record(
+    `contacts ${subcommand} reports --bday with no value as a missing value`,
+    result.code !== 0 &&
+      result.stderr.includes('Missing value for --bday') &&
+      requests.length === before,
+    { result }
+  );
+}
 
 for (const [subcommand, args] of [
   ['create', ['--title', 'Invalid priority', '--priority', '10']],

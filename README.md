@@ -376,12 +376,19 @@ node scripts/nextcloud.js contacts search --query "john"
 # Create a contact
 node scripts/nextcloud.js contacts create --name "John Doe" --email "john@example.com" --phone "+1234567890"
 
+# Create a contact with a birthday
+node scripts/nextcloud.js contacts create --name "John Doe" --bday "1943-10-19"
+
 # Get a specific contact
 node scripts/nextcloud.js contacts get --uid contact-uid
 
 # Update a contact
 node scripts/nextcloud.js contacts edit --uid contact-uid \
   --email "newemail@example.com"
+
+# Set or clear a birthday (--bday "" removes it)
+node scripts/nextcloud.js contacts edit --uid contact-uid --bday "1943-10-19"
+node scripts/nextcloud.js contacts edit --uid contact-uid --bday ""
 
 # Delete a contact
 node scripts/nextcloud.js contacts delete --uid contact-uid \

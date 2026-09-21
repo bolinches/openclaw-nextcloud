@@ -17917,6 +17917,35 @@ function parseStatusInput(value) {
   }
   return normalized;
 }
+function parseBirthdayInput(value) {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid birthday '${value}'. Expected a string.`);
+  }
+  const raw = value.trim();
+  const full = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(raw);
+  if (full) {
+    const [, y, mo, d] = full;
+    const normalized = `${y}-${mo}-${d}`;
+    const date = /* @__PURE__ */ new Date(`${normalized}T00:00:00Z`);
+    if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== normalized) {
+      throw new Error(`Invalid birthday '${value}'. That date does not exist.`);
+    }
+    return { value: normalized, hasYear: true };
+  }
+  const noYear = /^--(\d{2})-?(\d{2})$/.exec(raw);
+  if (noYear) {
+    const [, mo, d] = noYear;
+    if (Number(mo) < 1 || Number(mo) > 12 || Number(d) < 1 || Number(d) > 31) {
+      throw new Error(
+        `Invalid birthday '${value}'. Month must be 01-12 and day 01-31.`
+      );
+    }
+    return { value: `--${mo}-${d}`, hasYear: false };
+  }
+  throw new Error(
+    `Invalid birthday '${value}'. Use YYYY-MM-DD (1943-10-19), the compact form (19431019), or --MM-DD (--10-19) when the year is unknown.`
+  );
+}
 function parsePercentCompleteInput(value) {
   const str = String(value);
   if (!/^\d{1,3}$/.test(str)) {
@@ -19083,6 +19112,13 @@ var Contacts = {
     const org = getField("ORG");
     const title = getField("TITLE");
     const note = getField("NOTE");
+    let birthday = getField("BDAY");
+    if (birthday !== null) {
+      try {
+        birthday = parseBirthdayInput(birthday).value;
+      } catch {
+      }
+    }
     return {
       uid,
       fullName: fn,
@@ -19101,7 +19137,8 @@ var Contacts = {
       emails: emails.length > 0 ? emails : null,
       organization: org,
       title,
-      note
+      note,
+      birthday
     };
   },
   async get(uid, addressBookName = null) {
@@ -19187,6 +19224,8 @@ FN:${escapedFn}
 `;
     if (options.note) vcard += `NOTE:${escapePropertyValue(options.note)}
 `;
+    if (options.bday) vcard += `BDAY:${options.bday}
+`;
     vcard += `END:VCARD`;
     const filename = `${uid}.vcf`;
     const urlWithSlash = ab.url.endsWith("/") ? ab.url : ab.url + "/";
@@ -19211,6 +19250,14 @@ FN:${escapedFn}
 END:VCARD`);
     }
   },
+  // Drop a property line entirely, including any `itemN.` group prefix and the
+  // newline after it. Used to clear a field the caller explicitly emptied.
+  // The group's sibling properties (item1.X-ABLabel) are left in place: removing
+  // them would change how the client displays the fields that remain.
+  _removeVCardField(vcard, field) {
+    const regex = new RegExp(`^(?:[A-Za-z0-9-]+\\.)?${field}(?:;[^:\\r\\n]*)?:.*(?:\\r?\\n)?`, "mi");
+    return vcard.replace(regex, "");
+  },
   async update(uid, addressBookName, updates) {
     const contact = await this.findContactPath(uid, addressBookName);
     if (!contact) throw new Error(`Contact ${uid} not found.`);
@@ -19229,6 +19276,9 @@ END:VCARD`);
     if (updates.organization) vcard = this._updateVCardField(vcard, "ORG", escapePropertyValue(updates.organization));
     if (updates.title) vcard = this._updateVCardField(vcard, "TITLE", escapePropertyValue(updates.title));
     if (updates.note) vcard = this._updateVCardField(vcard, "NOTE", escapePropertyValue(updates.note));
+    if (updates.bday !== void 0) {
+      vcard = updates.bday === "" ? this._removeVCardField(vcard, "BDAY") : this._updateVCardField(vcard, "BDAY", updates.bday);
+    }
     await request(contact.href, {
       method: "PUT",
       headers: {
@@ -19916,6 +19966,10 @@ async function main() {
         if (titleIndex !== -1) options.title = args[titleIndex + 1];
         const note = readTextOption(args, "--note", "--note-file");
         if (note !== void 0) options.note = note;
+        const bdayIndex = args.indexOf("--bday");
+        if (bdayIndex !== -1) {
+          options.bday = parseBirthdayInput(args[bdayIndex + 1]).value;
+        }
         output(await Contacts.create(fullName, addressBook, options));
       } else if (subCommand === "edit") {
         const uidIndex = args.indexOf("--uid");
@@ -19936,6 +19990,11 @@ async function main() {
         if (titleIndex !== -1) updates.title = args[titleIndex + 1];
         const note = readTextOption(args, "--note", "--note-file");
         if (note !== void 0) updates.note = note;
+        const bdayIndex = args.indexOf("--bday");
+        if (bdayIndex !== -1) {
+          const rawBday = args[bdayIndex + 1];
+          updates.bday = rawBday === "" ? "" : parseBirthdayInput(rawBday).value;
+        }
         output(await Contacts.update(uid, addressBook, updates));
       } else if (subCommand === "delete") {
         const uidIndex = args.indexOf("--uid");

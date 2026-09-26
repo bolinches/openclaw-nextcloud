@@ -17995,6 +17995,106 @@ var CONFIRMATION_REQUIRED = /* @__PURE__ */ new Set([
   "cards:delete",
   "labels:delete"
 ]);
+var FLAG_TABLE = {
+  addressbooks: {
+    list: ""
+  },
+  boards: {
+    create: "--color --title",
+    delete: "--board",
+    edit: "--archived --board --color --title",
+    get: "--board",
+    list: ""
+  },
+  calendar: {
+    create: "--calendar --description --description-file --end --location --start --summary",
+    delete: "--calendar --uid",
+    edit: "--calendar --description --description-file --end --location --start --summary --uid",
+    list: "--calendar --from --to"
+  },
+  calendars: {
+    list: "--type"
+  },
+  cards: {
+    "assign-label": "--board --card --label --stack",
+    "comment-add": "--board --card --message --message-file --stack",
+    "comment-delete": "--board --card --comment --stack",
+    "comment-list": "--board --card --stack",
+    create: "--board --card --description --description-file --duedate --order --stack --title",
+    delete: "--board --card --stack",
+    edit: "--archived --board --card --description --description-file --done --duedate --order --stack --title",
+    get: "--board --card --stack",
+    list: "--board --card --stack",
+    move: "--board --card --order --stack --to-stack",
+    "remove-label": "--board --card --label --stack"
+  },
+  contacts: {
+    create: "--addressbook --bday --email --name --note --note-file --organization --phone --title",
+    delete: "--addressbook --uid",
+    edit: "--addressbook --bday --email --name --note --note-file --organization --phone --title --uid",
+    get: "--addressbook --uid",
+    list: "--addressbook",
+    search: "--addressbook --query"
+  },
+  files: {
+    delete: "--path",
+    get: "--path",
+    list: "--path",
+    search: "--query",
+    upload: "--content --content-file --path"
+  },
+  labels: {
+    create: "--board --color --title",
+    delete: "--board --label",
+    edit: "--board --color --label --title",
+    list: "--board"
+  },
+  notes: {
+    create: "--category --content --content-file --title",
+    delete: "--id",
+    edit: "--category --content --content-file --id --title",
+    get: "--id",
+    list: ""
+  },
+  shares: {
+    "create-link": "--expire --password --password-file --path --permissions",
+    delete: "--id",
+    list: "--path"
+  },
+  stacks: {
+    create: "--board --order --title",
+    delete: "--board --stack",
+    edit: "--board --order --stack --title",
+    list: "--board"
+  },
+  tasks: {
+    complete: "--calendar --uid",
+    create: "--calendar --class --description --description-file --due --location --priority --start --tags --title --url",
+    delete: "--calendar --uid",
+    edit: "--calendar --class --description --description-file --due --location --percent-complete --priority --start --status --tags --title --uid --url",
+    list: "--calendar"
+  }
+};
+var GLOBAL_FLAGS = ["--confirm"];
+function rejectUnknownFlags(args, command, subCommand) {
+  const table = FLAG_TABLE[command];
+  if (!table) return;
+  if (!(subCommand in table)) return;
+  const allowed = new Set(
+    `${table[subCommand]} ${GLOBAL_FLAGS.join(" ")}`.split(" ").filter(Boolean)
+  );
+  for (let i = 2; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith("--")) continue;
+    if (allowed.has(arg)) {
+      i++;
+      continue;
+    }
+    throw new Error(
+      `Unknown option '${arg}' for '${command} ${subCommand}'. Accepted: ${[...allowed].sort().join(", ")}`
+    );
+  }
+}
 function getOptionValue(args, flag) {
   const index = args.indexOf(flag);
   if (index === -1) return void 0;
@@ -19658,6 +19758,7 @@ async function main() {
   const command = args[0];
   const subCommand = args[1];
   try {
+    rejectUnknownFlags(args, command, subCommand);
     requireExplicitConfirmation(args, command, subCommand);
     if (command === "notes") {
       if (subCommand === "list") {

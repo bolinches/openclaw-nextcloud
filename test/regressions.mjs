@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1140,6 +1141,83 @@ record(
   'COMPLETED is stamped in UTC, as its Z suffix claims',
   result.code === 0 && Math.abs(Date.now() - completedAt) < 5 * 60 * 1000,
   { body: completePut?.body ?? null, result }
+);
+
+// Unknown flags used to be accepted and ignored, which is how
+// `calendar list --calendar <name>` reported success for months while returning
+// every calendar anyway (issue #5). A typo must fail loudly, and the message must
+// name what the command does accept so the caller can fix it in one round trip.
+before = requests.length;
+result = await run(['notes', 'list', '--category', 'Work']);
+record(
+  'a flag that belongs to a sibling subcommand is rejected',
+  result.code !== 0 &&
+    result.stderr.includes("Unknown option '--category'") &&
+    result.stderr.includes('Accepted:') &&
+    requests.length === before,
+  { result }
+);
+
+before = requests.length;
+result = await run(['notes', 'list', '--nope']);
+record(
+  'a misspelled flag is rejected rather than ignored',
+  result.code !== 0 &&
+    result.stderr.includes("Unknown option '--nope'") &&
+    requests.length === before,
+  { result }
+);
+
+// The realistic mistake: a flag that is valid elsewhere in the CLI but not here.
+before = requests.length;
+result = await run(['notes', 'create', '--title', 'x', '--calendar', 'Personal']);
+record(
+  'a flag from another command is rejected',
+  result.code !== 0 &&
+    result.stderr.includes("Unknown option '--calendar'") &&
+    requests.length === before,
+  { result }
+);
+
+// The guard must not reject documented usage.
+before = requests.length;
+result = await run(['notes', 'create', '--title', 'Guard sanity', '--content', 'body']);
+record(
+  'documented flags still pass the guard',
+  result.code === 0 && requests.length === before + 1,
+  { result }
+);
+
+// A value that itself begins with dashes is a legitimate payload (frontmatter on
+// --content). The guard skips one argument after each accepted flag, so the value
+// must not be mistaken for a flag.
+before = requests.length;
+result = await run(['notes', 'create', '--title', 'Dash value', '--content', '--> not a flag']);
+record(
+  'a flag value beginning with dashes is not treated as a flag',
+  result.code === 0 &&
+    requests.length === before + 1 &&
+    requests.at(-1)?.body.includes('--> not a flag'),
+  { request: requests.at(-1), result }
+);
+
+// The guard's table must cover every flag the CLI actually reads, or a future edit
+// that adds a flag would start rejecting it. Read index.js (where the flag reads
+// live) rather than the bundle.
+const sourceText = readFileSync(join(repoRoot, 'index.js'), 'utf8');
+const tableBlock = sourceText.match(/const FLAG_TABLE = \{[\s\S]*?\n\};/)?.[0] ?? '';
+const declaredFlags = new Set(tableBlock.match(/--[a-z-]+/g) ?? []);
+const mainBody = sourceText.slice(sourceText.indexOf('async function main()'));
+const readFlags = new Set();
+for (const m of mainBody.matchAll(/indexOf\('(--[a-z-]+)'\)/g)) readFlags.add(m[1]);
+for (const m of mainBody.matchAll(/getOptionValue\(\s*args,\s*'(--[a-z-]+)'/g)) readFlags.add(m[1]);
+for (const m of mainBody.matchAll(/readTextOption\(\s*args,\s*'(--[a-z-]+)'/g)) readFlags.add(m[1]);
+readFlags.delete('--confirm');   // global, deliberately not in the table
+const uncoveredFlags = [...readFlags].filter(f => !declaredFlags.has(f)).sort();
+record(
+  'the flag guard table covers every flag the CLI reads',
+  tableBlock.length > 0 && uncoveredFlags.length === 0,
+  { uncoveredFlags, declaredCount: declaredFlags.size, readCount: readFlags.size }
 );
 } finally {
   await new Promise(resolveClose => server.close(resolveClose));

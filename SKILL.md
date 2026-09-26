@@ -167,6 +167,8 @@ password files.
 
 ## Commands
 
+Every command rejects a flag it does not accept, naming the flags it does accept. A typo, or a flag from a different command, is an error rather than a silent no-op.
+
 ### Notes
 - `notes list`
 - `notes get --id <id>`

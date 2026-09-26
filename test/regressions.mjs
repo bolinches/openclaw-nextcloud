@@ -19,6 +19,16 @@ const calendarDiscovery = `<?xml version="1.0" encoding="utf-8"?>
       </cal:supported-calendar-component-set>
     </d:prop></d:propstat>
   </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/calendars/tester/work/</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>Work</d:displayname>
+      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+      <cal:supported-calendar-component-set>
+        <cal:comp name="VEVENT"/>
+      </cal:supported-calendar-component-set>
+    </d:prop></d:propstat>
+  </d:response>
 </d:multistatus>`;
 
 const addressBookDiscovery = `<?xml version="1.0" encoding="utf-8"?>
@@ -65,6 +75,27 @@ DESCRIPTION:Line one\\nLine two
 LOCATION:Room\\; 2
 DTSTART:20260728T120000Z
 DTEND:20260728T130000Z
+END:VEVENT
+END:VCALENDAR</cal:calendar-data>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>`;
+
+// A second event calendar, so a scoped `calendar list` can be told apart from an
+// unscoped one. Before the --calendar fix the list branch ignored the flag and
+// merged every calendar, so any assertion here passed whichever value was passed.
+const workEventReport = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/remote.php/dav/calendars/tester/work/standup.ics</d:href>
+    <d:propstat><d:prop>
+      <d:getetag>"standup"</d:getetag>
+      <cal:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:work-1
+SUMMARY:Standup
+DTSTART:20260728T090000Z
+DTEND:20260728T093000Z
 END:VEVENT
 END:VCALENDAR</cal:calendar-data>
     </d:prop></d:propstat>
@@ -253,6 +284,10 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('content-type', 'application/xml');
     res.end(groupedContactReport);
   } else if (req.method === 'REPORT' &&
+             req.url === '/remote.php/dav/calendars/tester/work/') {
+    res.setHeader('content-type', 'application/xml');
+    res.end(workEventReport);
+  } else if (req.method === 'REPORT' &&
              req.url === '/remote.php/dav/calendars/tester/personal/') {
     res.setHeader('content-type', 'application/xml');
     // findTaskPath names the UID it is looking for in the query, so a fixture can
@@ -394,6 +429,68 @@ record(
     listedEvent?.description === 'Line one\nLine two' &&
     listedEvent?.location === 'Room; 2',
   { listedEvent, result }
+);
+
+// --calendar on `calendar list` was accepted and ignored: the list branch read
+// only --from/--to and merged every VEVENT calendar, so a scoped request looked
+// correct whenever the default calendar held the event it was looking for. That
+// is how upstream issue #5 was closed as fixed while the flag still did nothing.
+result = await run([
+  'calendar', 'list',
+  '--from', '2026-07-28T00:00:00Z',
+  '--to', '2026-07-29T00:00:00Z',
+  '--calendar', 'Work'
+]);
+let workOnly = [];
+try {
+  workOnly = JSON.parse(result.stdout)?.data ?? [];
+} catch {
+  // The assertion below preserves the parse failure as test evidence.
+}
+record(
+  'calendar list --calendar scopes the result to that calendar alone',
+  result.code === 0 &&
+    workOnly.length === 1 &&
+    workOnly[0]?.uid === 'work-1' &&
+    workOnly.every(e => e.calendar === 'Work'),
+  { workOnly, result }
+);
+
+// Unscoped has to keep working: no flag means every calendar, as documented.
+result = await run([
+  'calendar', 'list',
+  '--from', '2026-07-28T00:00:00Z',
+  '--to', '2026-07-29T00:00:00Z'
+]);
+let unscoped = [];
+try {
+  unscoped = JSON.parse(result.stdout)?.data ?? [];
+} catch {
+  // The assertion below preserves the parse failure as test evidence.
+}
+record(
+  'calendar list without --calendar still returns every calendar',
+  result.code === 0 &&
+    unscoped.length === 2 &&
+    unscoped.some(e => e.calendar === 'Personal') &&
+    unscoped.some(e => e.calendar === 'Work'),
+  { unscoped, result }
+);
+
+// An unknown calendar name must fail loudly rather than silently returning
+// everything, which is the behaviour that hid this bug for so long.
+result = await run([
+  'calendar', 'list',
+  '--from', '2026-07-28T00:00:00Z',
+  '--to', '2026-07-29T00:00:00Z',
+  '--calendar', 'NoSuchCalendar'
+]);
+record(
+  'calendar list --calendar rejects an unknown calendar',
+  result.code !== 0 &&
+    result.stderr.includes('NoSuchCalendar') &&
+    result.stderr.includes('not found'),
+  { result }
 );
 
 // NEXTCLOUD_EMAIL is optional: unset, events must be written exactly as they

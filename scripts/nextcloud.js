@@ -18400,8 +18400,16 @@ var CalDAV = {
       };
     }).filter((c) => c && (!componentType || c.componentType === componentType));
   },
-  async getEvents(start, end) {
-    const calendars = await this.findCalendars("VEVENT");
+  async getEvents(start, end, calendarName = null) {
+    let calendars = await this.findCalendars("VEVENT");
+    if (calendarName) {
+      const matched = matchByName(calendars, calendarName);
+      if (!matched) {
+        const available = calendars.map((c) => c.displayname).join(", ") || "(none)";
+        throw new Error(`Event-enabled calendar '${calendarName}' not found. Available: ${available}`);
+      }
+      calendars = [matched];
+    }
     const allEvents = [];
     const startStr = toCalDavDate(parseDateInput(start));
     const endStr = toCalDavDate(parseDateInput(end));
@@ -19734,9 +19742,11 @@ async function main() {
       if (subCommand === "list") {
         const fromIndex = args.indexOf("--from");
         const toIndex = args.indexOf("--to");
+        const calIndex = args.indexOf("--calendar");
+        const calendar = calIndex !== -1 ? args[calIndex + 1] : null;
         const start = fromIndex !== -1 ? args[fromIndex + 1] : (0, import_date_fns.formatISO)(/* @__PURE__ */ new Date());
         const end = toIndex !== -1 ? args[toIndex + 1] : (0, import_date_fns.formatISO)((0, import_date_fns.addDays)(/* @__PURE__ */ new Date(), 7));
-        const result = await CalDAV.getEvents(start, end);
+        const result = await CalDAV.getEvents(start, end, calendar);
         output(result);
       } else if (subCommand === "create") {
         const summaryIndex = args.indexOf("--summary");

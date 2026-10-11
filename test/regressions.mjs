@@ -1,7 +1,8 @@
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -305,12 +306,25 @@ const todoListReport = todoReport.replace(
   `${todoResponse('timezone', timezoneTodo)}</d:multistatus>`
 );
 
+// Bytes that are invalid in UTF-8, so a decoded body loses them: a text read
+// turns each into U+FFFD. Served verbatim for `files get`.
+const downloadBytes = Buffer.concat([
+  Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
+  Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x81]),
+  Buffer.alloc(256).map((_, i) => i)
+]);
+
 const server = http.createServer(async (req, res) => {
   let body = '';
   for await (const chunk of req) body += chunk;
   requests.push({ method: req.method, url: req.url, body });
 
   res.statusCode = 200;
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/remote.php/dav/files/tester/downloads/')) {
+    res.setHeader('content-type', 'application/octet-stream');
+    res.end(downloadBytes);
+    return;
+  }
   if (req.method === 'PROPFIND' &&
       /^\/remote\.php\/dav\/calendars\/[^/]+\/$/.test(req.url ?? '')) {
     res.setHeader('content-type', 'application/xml');
@@ -1301,6 +1315,51 @@ record(
     requests.at(-1)?.body.includes('--> not a flag'),
   { request: requests.at(-1), result }
 );
+
+// --- Files: binary-safe download ---------------------------------------
+//
+// `files get` used to read the body with response.text(), which decodes UTF-8
+// and replaces every non-UTF-8 byte with U+FFFD. --out writes the raw bytes, so
+// it is the byte-safe path; inline content stays text-only, because a JSON
+// string cannot carry arbitrary bytes.
+const downloadDir = mkdtempSync(join(tmpdir(), 'nc-download-'));
+const outFile = join(downloadDir, 'out.bin');
+
+before = requests.length;
+result = await run(['files', 'get', '--path', 'downloads/blob.bin', '--out', outFile]);
+let wroteFile = null;
+try { wroteFile = readFileSync(outFile); } catch { /* asserted below */ }
+record(
+  'binary download with --out writes the exact bytes',
+  result.code === 0 && wroteFile !== null && wroteFile.equals(downloadBytes),
+  {
+    gotLength: wroteFile?.length ?? null,
+    expectedLength: downloadBytes.length,
+    gotHex: wroteFile?.toString('hex').slice(0, 40) ?? null,
+    expectedHex: downloadBytes.toString('hex').slice(0, 40),
+    result
+  }
+);
+
+let reportedDownloadSize = null;
+try { reportedDownloadSize = JSON.parse(result.stdout)?.data?.size ?? null; } catch { /* asserted */ }
+record(
+  'binary download reports the byte length',
+  reportedDownloadSize === downloadBytes.length,
+  { reportedDownloadSize, expected: downloadBytes.length }
+);
+
+before = requests.length;
+result = await run(['files', 'get', '--path', 'downloads/blob.bin']);
+let inlineContent = null;
+try { inlineContent = JSON.parse(result.stdout)?.data?.content ?? null; } catch { /* asserted */ }
+record(
+  'download without --out still returns inline content for text callers',
+  result.code === 0 && typeof inlineContent === 'string',
+  { inlineContentSample: typeof inlineContent === 'string' ? inlineContent.slice(0, 20) : null, result }
+);
+
+rmSync(downloadDir, { recursive: true, force: true });
 
 // The guard's table must match the flags the CLI actually reads, in both
 // directions: a flag missing from the table would be rejected, and a flag in the
